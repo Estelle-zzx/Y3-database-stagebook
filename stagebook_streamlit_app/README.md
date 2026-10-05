@@ -1,6 +1,6 @@
 # StageBook 数据库大作业验收说明
 
-本文档面向课程老师/助教，用于在本地快速部署、运行并验收 StageBook 数据库大作业项目。
+本文档保留页面验收路径。仓库结构、部署命令、测试限制和贡献说明以[根目录 README](../README.md)为准；本次整理未完成 MySQL 与页面端到端验收。
 
 ---
 
@@ -29,21 +29,13 @@ StageBook 是一个面向剧场演出的信息管理与个性化观演辅助系�
 
 ---
 
-## 2. 项目包结构说明
+## 2. 仓库结构说明
 
-解压项目包后，通常可以看到以下文件或文件夹：
+- `../stagebook_code/main_code.sql`：数据库结构与业务对象。
+- `../stagebook_code/StageBook_insert_data.sql`：推荐演示数据。
+- 当前目录的 `app.py`、`requirements.txt` 和 `.streamlit/secrets.example.toml`：数据库连接版应用。
 
-```text
-stagebook_streamlit_app_login_modified/
-├─ app.py                         # Streamlit 主程序
-├─ main_code.sql                  # 数据库建表、视图、存储过程、测试数据等 SQL 脚本
-├─ requirements.txt               # Python 依赖
-├─ README.md                      # 本说明文件
-└─ .streamlit/
-   └─ secrets.example.toml        # 数据库连接配置模板，不包含真实密码
-```
-
-如果项目包中的文件名略有差异，请以实际解压后的文件为准，但核心运行文件为 `app.py` 和 `main_code.sql`。
+当前目录不包含 main_code.sql；旧压缩包名称不适用于当前仓库。
 
 ---
 
@@ -52,7 +44,7 @@ stagebook_streamlit_app_login_modified/
 建议使用以下环境进行验收：
 
 - 操作系统：Windows 10 / Windows 11
-- Python：3.9 及以上版本
+- Python：建议 3.10 及以上版本（未验证最低版本）
 - MySQL：8.0 及以上版本
 - 浏览器：Chrome / Edge / Firefox 均可
 
@@ -74,23 +66,15 @@ mysql --version
 
 ## 4. 第一次运行前的准备步骤
 
-### 4.1 解压项目包
+### 4.1 进入应用目录
 
-将项目压缩包解压到本地目录，例如：
+克隆仓库后，从仓库根目录进入：
 
-```text
-D:\大学课程\大三下\数据库\stagebook_streamlit_app_login_modified
+```bash
+cd stagebook_streamlit_app
 ```
 
-注意：路径中可以包含中文，但后续在 PowerShell 中进入目录时建议加英文双引号。
-
-例如：
-
-```powershell
-cd "D:\大学课程\大三下\数据库\stagebook_streamlit_app_login_modified"
-```
-
-不要在 PowerShell 中使用 `cd /d`，这是 cmd 的写法。
+建议先按根目录 README 建立虚拟环境。
 
 ---
 
@@ -112,33 +96,9 @@ python -m pip install -r requirements.txt
 
 ### 4.3 导入数据库脚本
 
-请先在 MySQL 中导入项目提供的 `main_code.sql`。
+请遵循[根目录 README 的数据库初始化说明](../README.md#编译运行方式)，先执行 `stagebook_code/main_code.sql`，再执行 `stagebook_code/StageBook_insert_data.sql`。结构脚本不含演示数据，并会删除重建 StageBook 数据库；只能在独立测试实例中执行。
 
-方式一：使用 MySQL 命令行导入。
-
-```powershell
-mysql -u root -p < main_code.sql
-```
-
-输入本机 MySQL 密码后等待执行完成。
-
-方式二：使用 MySQL Workbench / DataGrip / Navicat 等工具。
-
-1. 打开数据库管理工具。
-2. 连接本机 MySQL。
-3. 打开 `main_code.sql`。
-4. 执行整个 SQL 文件。
-
-导入完成后，数据库中应包含本项目所需的表、视图、存储过程、触发器和测试数据。
-
-如果 SQL 文件中已经包含 `CREATE DATABASE` 和 `USE` 语句，则直接执行即可；如果老师本机环境要求手动创建数据库，请创建与程序连接参数一致的数据库名，例如：
-
-```sql
-CREATE DATABASE stagebook DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE stagebook;
-```
-
-然后再执行 `main_code.sql`。
+脚本创建的数据库名为 `StageBook`，末尾 GRANT 使用小写 `stagebook`，大小写敏感环境需先在本地副本中统一前缀。不要使用此前的 PowerShell 输入重定向命令；可使用 MySQL 客户端的 SOURCE 或数据库管理工具。
 
 ---
 
@@ -157,7 +117,7 @@ host: localhost
 port: 3306
 user: root
 password: 本机 MySQL 密码
-database: stagebook
+database: StageBook
 ```
 
 然后点击连接或刷新页面即可进入系统。
@@ -182,7 +142,7 @@ host = "localhost"
 port = 3306
 user = "root"
 password = "本机MySQL密码"
-database = "stagebook"
+database = "StageBook"
 ```
 
 注意：
@@ -223,14 +183,14 @@ http://localhost:8501
 
 ```text
 用户名：Estelle
-密码：123456
+密码：（见本地演示界面提示）
 ```
 
 ### 管理员账号
 
 ```text
 用户名：admin
-密码：StageBook123!
+密码：（见本地演示界面提示）
 ```
 
 登录界面中也会显示以上测试账号提示，方便现场试用。
@@ -242,7 +202,7 @@ http://localhost:8501
 使用普通用户账号登录：
 
 ```text
-Estelle / 123456
+Estelle / （见本地演示界面提示）
 ```
 
 建议按以下顺序验收。
@@ -358,7 +318,7 @@ Estelle / 123456
 使用管理员账号登录：
 
 ```text
-admin / StageBook123!
+admin / （见本地演示界面提示）
 ```
 
 管理员界面名称为“演出信息管理”。
@@ -565,13 +525,13 @@ pip install -r requirements.txt
 
 推荐老师按以下顺序进行快速验收：
 
-1. 导入 `main_code.sql`。
+1. 从仓库根目录导入 `stagebook_code/main_code.sql`，再导入 `stagebook_code/StageBook_insert_data.sql`；执行前检查删除重建和大小写限制。
 2. 执行 `pip install -r requirements.txt`。
 3. 执行 `streamlit run app.py`。
 4. 在侧边栏输入本机 MySQL 连接信息。
-5. 使用普通用户账号 `Estelle / 123456` 登录。
+5. 使用普通用户账号 `Estelle / （见本地演示界面提示）` 登录。
 6. 验收首页、演出信息汇总、偏好画像、推荐加入计划、观剧日历、行程辅助。
-7. 退出后使用管理员账号 `admin / StageBook123!` 登录。
+7. 退出后使用管理员账号 `admin / （见本地演示界面提示）` 登录。
 8. 验收演出信息管理、整体剧目日历、新增剧目、新增场次、基础数据维护、删除与批量操作、SQL 展示台。
 
 ---
