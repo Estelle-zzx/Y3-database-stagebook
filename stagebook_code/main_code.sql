@@ -544,7 +544,7 @@ BEGIN
         ON tpo.theater_id = th.theater_id
        AND tpo.suitable_district = u.home_district
      WHERE pf.performance_id = p_performance_id
-     ORDER BY tpo.estimated_time ASC
+     ORDER BY tpo.estimated_time ASC, tpo.estimated_cost ASC, tpo.transport_id ASC
      LIMIT 1;
 
     IF v_transport_type = 'subway' THEN
@@ -1182,34 +1182,34 @@ LEFT JOIN transport_ranked tr
 CREATE ROLE IF NOT EXISTS stagebook_user;
 CREATE ROLE IF NOT EXISTS stagebook_admin;
 
-GRANT SELECT ON stagebook.v_public_performance_info TO stagebook_user;
-GRANT SELECT ON stagebook.v_user_calendar TO stagebook_user;
-GRANT SELECT ON stagebook.v_user_preference_profile TO stagebook_user;
-GRANT SELECT ON stagebook.v_hybrid_recommendation TO stagebook_user;
-GRANT SELECT ON stagebook.v_planned_trip_assistance TO stagebook_user;
+GRANT SELECT ON StageBook.v_public_performance_info TO stagebook_user;
+GRANT SELECT ON StageBook.v_user_calendar TO stagebook_user;
+GRANT SELECT ON StageBook.v_user_preference_profile TO stagebook_user;
+GRANT SELECT ON StageBook.v_hybrid_recommendation TO stagebook_user;
+GRANT SELECT ON StageBook.v_planned_trip_assistance TO stagebook_user;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON stagebook.Watch_Record TO stagebook_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON stagebook.Planned_Performance TO stagebook_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON stagebook.Favorite_Actor TO stagebook_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON stagebook.Favorite_Category TO stagebook_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON stagebook.Favorite_Language TO stagebook_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON stagebook.Favorite_District TO stagebook_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON StageBook.Watch_Record TO stagebook_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON StageBook.Planned_Performance TO stagebook_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON StageBook.Favorite_Actor TO stagebook_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON StageBook.Favorite_Category TO stagebook_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON StageBook.Favorite_Language TO stagebook_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON StageBook.Favorite_District TO stagebook_user;
 
-GRANT SELECT, UPDATE ON stagebook.User TO stagebook_user;
+GRANT SELECT, UPDATE ON StageBook.User TO stagebook_user;
 
-GRANT ALL PRIVILEGES ON stagebook.Production TO stagebook_admin;
-GRANT ALL PRIVILEGES ON stagebook.Performance TO stagebook_admin;
-GRANT ALL PRIVILEGES ON stagebook.Theater TO stagebook_admin;
-GRANT ALL PRIVILEGES ON stagebook.Actor TO stagebook_admin;
-GRANT ALL PRIVILEGES ON stagebook.Role TO stagebook_admin;
-GRANT ALL PRIVILEGES ON stagebook.Performance_Cast TO stagebook_admin;
-GRANT ALL PRIVILEGES ON stagebook.Nearby_Restaurant TO stagebook_admin;
-GRANT ALL PRIVILEGES ON stagebook.Transport_Option TO stagebook_admin;
+GRANT ALL PRIVILEGES ON StageBook.Production TO stagebook_admin;
+GRANT ALL PRIVILEGES ON StageBook.Performance TO stagebook_admin;
+GRANT ALL PRIVILEGES ON StageBook.Theater TO stagebook_admin;
+GRANT ALL PRIVILEGES ON StageBook.Actor TO stagebook_admin;
+GRANT ALL PRIVILEGES ON StageBook.Role TO stagebook_admin;
+GRANT ALL PRIVILEGES ON StageBook.Performance_Cast TO stagebook_admin;
+GRANT ALL PRIVILEGES ON StageBook.Nearby_Restaurant TO stagebook_admin;
+GRANT ALL PRIVILEGES ON StageBook.Transport_Option TO stagebook_admin;
 
-GRANT SELECT ON stagebook.User TO stagebook_admin;
-GRANT SELECT ON stagebook.Watch_Record TO stagebook_admin;
-GRANT SELECT ON stagebook.Planned_Performance TO stagebook_admin;
-GRANT SELECT ON stagebook.v_user_preference_profile TO stagebook_admin;
-GRANT SELECT ON stagebook.v_hybrid_recommendation TO stagebook_admin;
-GRANT SELECT ON stagebook.v_planned_trip_assistance TO stagebook_admin;
-GRANT SELECT ON stagebook.v_public_performance_info TO stagebook_admin;
+GRANT SELECT ON StageBook.User TO stagebook_admin;
+GRANT SELECT ON StageBook.Watch_Record TO stagebook_admin;
+GRANT SELECT ON StageBook.Planned_Performance TO stagebook_admin;
+GRANT SELECT ON StageBook.v_user_preference_profile TO stagebook_admin;
+GRANT SELECT ON StageBook.v_hybrid_recommendation TO stagebook_admin;
+GRANT SELECT ON StageBook.v_planned_trip_assistance TO stagebook_admin;
+GRANT SELECT ON StageBook.v_public_performance_info TO stagebook_admin;
