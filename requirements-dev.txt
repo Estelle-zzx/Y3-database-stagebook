@@ -1,0 +1,3 @@
+-r stagebook_streamlit_app/requirements.txt
+pytest>=8,<9
+icalendar>=6,<7

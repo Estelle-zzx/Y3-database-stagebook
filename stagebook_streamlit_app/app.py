@@ -28,6 +28,8 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, URL
 from sqlalchemy.exc import SQLAlchemyError
+from services import set_calendar_status, refresh_profile_recommendations, delete_catalog_item
+from trip_planning import departure_time, schedule_conflicts, export_calendar
 
 
 # =========================
@@ -238,9 +240,7 @@ def execute_sql(engine: Engine, sql: str, params: dict[str, Any] | None = None) 
 
 
 def call_profile_recommendation(engine: Engine, user_id: int) -> pd.DataFrame:
-    # MySQL CALL 会返回结果集；这里用 read_sql 直接拿存储过程返回的推荐表。
-    with engine.connect() as conn:
-        return pd.read_sql(text("CALL sp_recommend_by_profile(:uid)"), conn, params={"uid": user_id})
+    return refresh_profile_recommendations(engine, user_id)
 
 
 
@@ -471,45 +471,18 @@ def ensure_teacher_test_accounts(engine: Engine) -> None:
         },
     ]
     for account in accounts:
-        user_df = query_df(engine, "SELECT user_id FROM `User` WHERE username = :username LIMIT 1", {"username": account["username"]})
-        if user_df.empty:
-            with engine.begin() as conn:
-                result = conn.execute(
-                    text(
-                        """
-                        INSERT INTO `User`(username, nickname, city, price_preference, time_preference, home_district, role)
-                        VALUES(:username, :nickname, '上海', :price_preference, :time_preference, :home_district, :role)
-                        """
-                    ),
-                    account,
-                )
-                user_id = int(result.lastrowid)
-        else:
-            user_id = int(user_df.iloc[0]["user_id"])
-            execute_sql(
-                engine,
-                """
-                UPDATE `User`
-                SET nickname = :nickname, role = :role,
-                    price_preference = :price_preference,
-                    time_preference = :time_preference,
-                    home_district = :home_district
-                WHERE user_id = :user_id
-                """,
-                {**account, "user_id": user_id},
-            )
-        salt_hex, password_hash = hash_password(account["password"])
-        execute_sql(
-            engine,
-            f"""
-            INSERT INTO {AUTH_TABLE}(user_id, password_salt, password_hash, is_active)
-            VALUES(:user_id, :salt, :hash, 1)
-            ON DUPLICATE KEY UPDATE password_salt = VALUES(password_salt),
-                                    password_hash = VALUES(password_hash),
-                                    is_active = 1
-            """,
-            {"user_id": user_id, "salt": salt_hex, "hash": password_hash},
-        )
+        with engine.begin() as conn:
+            result = conn.execute(text(
+                "INSERT IGNORE INTO `User`(username, nickname, city, price_preference, time_preference, home_district, role) "
+                "VALUES(:username, :nickname, '上海', :price_preference, :time_preference, :home_district, :role)"
+            ), account)
+            if not result.rowcount:
+                continue
+            salt_hex, password_hash = hash_password(account["password"])
+            conn.execute(text(
+                f"INSERT INTO {AUTH_TABLE}(user_id, password_salt, password_hash, is_active) "
+                "VALUES(:user_id, :salt, :hash, 1)"
+            ), {"user_id": int(result.lastrowid), "salt": salt_hex, "hash": password_hash})
 
 
 def page_auth(engine: Engine) -> None:
@@ -580,7 +553,12 @@ def current_user() -> dict[str, Any]:
 
 def delete_current_account(engine: Engine, user_id: int) -> None:
     """删除当前普通用户账号；User 外键会级联清理其登录、计划、记录和偏好。"""
-    execute_sql(engine, "DELETE FROM `User` WHERE user_id = :uid AND role = 'user'", {"uid": user_id})
+    with engine.begin() as conn:
+        user = conn.execute(text("SELECT user_id FROM `User` WHERE user_id=:uid AND role='user' FOR UPDATE"), {"uid": user_id}).first()
+        if user is None:
+            return
+        conn.execute(text("DELETE FROM Profile_Recommendation_Result WHERE user_id=:uid"), {"uid": user_id})
+        conn.execute(text("DELETE FROM `User` WHERE user_id=:uid"), {"uid": user_id})
 
 
 def render_user_sidebar(engine: Engine, user: dict[str, Any]) -> None:
@@ -1141,9 +1119,7 @@ def _day_management_dialog(engine: Engine, user_id: int, selected_day: date) -> 
             }
             with st.form(f"calendar_add_plan_{selected_day}"):
                 perf_label = st.selectbox("选择场次", list(options.keys()))
-                status = st.selectbox("状态", ["planned", "booked", "watched"], index=0)
-                watched_score = st.slider("watched 评分", min_value=0.0, max_value=10.0, value=8.0, step=0.5)
-                st.caption("选择 watched 时会直接写入观剧记录；planned/booked 会写入计划。")
+                status = st.selectbox("状态", ["planned", "booked"], index=0)
                 if st.form_submit_button("加入日历"):
                     pid = options[perf_label]
                     dup_df = query_df(
@@ -1159,21 +1135,10 @@ def _day_management_dialog(engine: Engine, user_id: int, selected_day: date) -> 
                         st.warning("该剧目的这个场次已经在你的计划或记录中，不能重复添加。")
                     else:
                         try:
-                            if status == "watched":
-                                execute_sql(
-                                    engine,
-                                    "INSERT INTO Watch_Record(user_id, performance_id, watch_date, score) VALUES(:uid, :pid, :watch_date, :score)",
-                                    {"uid": user_id, "pid": pid, "watch_date": selected_day, "score": watched_score},
-                                )
-                            else:
-                                execute_sql(
-                                    engine,
-                                    "INSERT INTO Planned_Performance(user_id, performance_id, status) VALUES(:uid, :pid, :status)",
-                                    {"uid": user_id, "pid": pid, "status": status},
-                                )
+                            set_calendar_status(engine, user_id, pid, status, add_only=True)
                             st.toast("添加成功", icon="✅")
                             st.rerun()
-                        except SQLAlchemyError as exc:
+                        except (SQLAlchemyError, ValueError) as exc:
                             st.error("添加失败，可能是场次已结束、已重复添加或触发器拦截。")
                             st.caption(str(exc))
 
@@ -1183,7 +1148,7 @@ def _day_management_dialog(engine: Engine, user_id: int, selected_day: date) -> 
             """
             SELECT v.performance_id, v.title, v.theater_name, v.start_time, v.end_time
             FROM v_public_performance_info v
-            WHERE DATE(v.start_time) = :day
+            WHERE DATE(v.start_time) = :day AND v.end_time <= NOW()
               AND NOT EXISTS (SELECT 1 FROM Watch_Record wr WHERE wr.user_id = :uid AND wr.performance_id = v.performance_id)
             ORDER BY v.start_time DESC
             """,
@@ -1210,14 +1175,10 @@ def _day_management_dialog(engine: Engine, user_id: int, selected_day: date) -> 
                         st.warning("该剧目的这个场次已经记录过，不能重复添加。")
                     else:
                         try:
-                            execute_sql(
-                                engine,
-                                "INSERT INTO Watch_Record(user_id, performance_id, watch_date, score) VALUES(:uid, :pid, :watch_date, :score)",
-                                {"uid": user_id, "pid": pid, "watch_date": selected_day, "score": score},
-                            )
+                            set_calendar_status(engine, user_id, pid, "watched", score)
                             st.toast("添加成功", icon="✅")
                             st.rerun()
-                        except SQLAlchemyError as exc:
+                        except (SQLAlchemyError, ValueError) as exc:
                             st.error("保存失败。")
                             st.caption(str(exc))
 
@@ -1252,44 +1213,10 @@ def _day_management_dialog(engine: Engine, user_id: int, selected_day: date) -> 
                 st.caption("改为 canceled 会从日历移除；改为 watched 会进入观剧记录。")
                 if st.form_submit_button("更新状态"):
                     try:
-                        if new_status == "canceled":
-                            execute_sql(engine, "DELETE FROM Planned_Performance WHERE user_id = :uid AND performance_id = :pid", {"uid": user_id, "pid": pid})
-                            execute_sql(engine, "DELETE FROM Watch_Record WHERE user_id = :uid AND performance_id = :pid", {"uid": user_id, "pid": pid})
-                            st.toast("已取消并从日历中移除", icon="🗑️")
-                        elif new_status == "watched":
-                            exists = query_df(
-                                engine,
-                                "SELECT COUNT(*) AS cnt FROM Watch_Record WHERE user_id = :uid AND performance_id = :pid",
-                                {"uid": user_id, "pid": pid},
-                            ).iloc[0]
-                            if int(exists["cnt"]):
-                                execute_sql(
-                                    engine,
-                                    "UPDATE Watch_Record SET watch_date = :watch_date, score = :score WHERE user_id = :uid AND performance_id = :pid",
-                                    {"uid": user_id, "pid": pid, "watch_date": selected_day, "score": score},
-                                )
-                                execute_sql(engine, "DELETE FROM Planned_Performance WHERE user_id = :uid AND performance_id = :pid", {"uid": user_id, "pid": pid})
-                            else:
-                                execute_sql(
-                                    engine,
-                                    "INSERT INTO Watch_Record(user_id, performance_id, watch_date, score) VALUES(:uid, :pid, :watch_date, :score)",
-                                    {"uid": user_id, "pid": pid, "watch_date": selected_day, "score": score},
-                                )
-                            st.toast("已标记为 watched", icon="✅")
-                        else:
-                            execute_sql(
-                                engine,
-                                """
-                                INSERT INTO Planned_Performance(user_id, performance_id, status)
-                                VALUES(:uid, :pid, :status)
-                                ON DUPLICATE KEY UPDATE status = VALUES(status)
-                                """,
-                                {"status": new_status, "uid": user_id, "pid": pid},
-                            )
-                            execute_sql(engine, "DELETE FROM Watch_Record WHERE user_id = :uid AND performance_id = :pid", {"uid": user_id, "pid": pid})
-                            st.toast("更新成功", icon="✅")
+                        set_calendar_status(engine, user_id, pid, new_status, score)
+                        st.toast("状态已更新", icon="✅")
                         st.rerun()
-                    except SQLAlchemyError as exc:
+                    except (SQLAlchemyError, ValueError) as exc:
                         st.error("状态更新失败。")
                         st.caption(str(exc))
 
@@ -1646,6 +1573,8 @@ def page_recommendations(engine: Engine, user_id: int) -> None:
             st.info(f"最相似用户：{sim_user.iloc[0]['nickname']} / {sim_user.iloc[0]['username']}")
     c2.markdown("<div class='action-hint'>推荐结果来自数据库视图；点击加入计划后，状态固定为 planned，并与日历和行程辅助联动。</div>", unsafe_allow_html=True)
 
+    call_profile_recommendation(engine, user_id)
+
     rec_df = query_df(
         engine,
         """
@@ -1686,7 +1615,7 @@ def page_recommendations(engine: Engine, user_id: int) -> None:
     )
     view = rec_df[rec_df["recommendation_source"].isin(source_filter)].copy()
 
-    for row in view.itertuples():
+    for rec_index, row in enumerate(view.itertuples()):
         special = tag_badge(row.tag_label, "badge-red")
         source = tag_badge(row.recommendation_source)
         profile = tag_badge(row.matched_profile_type, "badge-green")
@@ -1705,7 +1634,7 @@ def page_recommendations(engine: Engine, user_id: int) -> None:
             unsafe_allow_html=True,
         )
 
-        add_key = f"add_recommend_{user_id}_{row.recommended_performance_id}"
+        add_key = f"add_recommend_{user_id}_{row.recommended_performance_id}_{rec_index}"
         if st.button("加入计划", key=add_key):
             pid = int(row.recommended_performance_id)
             dup_df = query_df(
@@ -1721,17 +1650,10 @@ def page_recommendations(engine: Engine, user_id: int) -> None:
                 st.warning("该剧目的这个场次已经在你的计划或记录中，不能重复加入。")
             else:
                 try:
-                    execute_sql(
-                        engine,
-                        """
-                        INSERT INTO Planned_Performance(user_id, performance_id, status)
-                        VALUES(:uid, :pid, 'planned')
-                        """,
-                        {"uid": user_id, "pid": pid},
-                    )
+                    set_calendar_status(engine, user_id, pid, "planned", add_only=True)
                     st.success("已加入计划，并会同步显示在观剧日历与场景化行程辅助中。")
                     st.rerun()
-                except SQLAlchemyError as exc:
+                except (SQLAlchemyError, ValueError) as exc:
                     st.error("加入计划失败。")
                     st.caption(str(exc))
 
@@ -1754,10 +1676,11 @@ def page_trip_assistance(engine: Engine, user_id: int) -> None:
     df = query_df(
         engine,
         """
-        SELECT t.*, v.title, v.version, v.category, v.language, v.district
+        SELECT t.*, v.title, v.version, v.category, v.language, v.district, pf.theater_id
         FROM v_planned_trip_assistance t
         JOIN v_public_performance_info v ON t.performance_id = v.performance_id
-        WHERE t.user_id = :uid
+        JOIN Performance pf ON pf.performance_id = t.performance_id
+        WHERE t.user_id = :uid AND t.end_time > NOW()
         ORDER BY t.start_time
         """,
         {"uid": user_id},
@@ -1767,11 +1690,27 @@ def page_trip_assistance(engine: Engine, user_id: int) -> None:
         st.info("暂无 planned/booked 状态的计划观看记录，或暂无匹配的行程辅助数据。")
         return
 
+    c1, c2 = st.columns(2)
+    extra = c1.number_input("出发额外预留（分钟）", min_value=0, max_value=180, value=0, step=5)
+    transfer = c2.number_input("跨剧院转场预留（分钟）", min_value=0, max_value=240, value=60, step=5)
+    st.caption("交通与餐厅数据为课程演示数据；转场时间是你的预留值，不代表实时路线测算。出发建议不包含用餐。")
+    events = df.to_dict("records")
+    for conflict in schedule_conflicts(events, int(transfer)):
+        first, second = conflict["first"], conflict["second"]
+        if conflict["kind"] == "overlap":
+            st.warning(f"时间重叠：{first['title']}（{fmt_dt(first['start_time'])}）与 {second['title']}（{fmt_dt(second['start_time'])}）。")
+        else:
+            st.warning(f"转场偏紧：{first['title']} → {second['title']} 仅间隔 {conflict['gap_minutes']:.0f} 分钟，少于预留的 {transfer} 分钟。")
+    st.download_button("导出观演日历 (.ics)", data=export_calendar(events, user_id),
+                       file_name="stagebook-calendar.ics", mime="text/calendar")
+    st.caption("导出时间采用上海时区；取消或修改计划后请重新导出，并检查日历中的旧安排。")
     st.caption(f"共 {len(df)} 条场次行程建议")
     for row in df.itertuples():
         restaurant = row.restaurant_name if pd.notna(row.restaurant_name) else "暂无匹配餐厅"
         transport = row.transport_type if pd.notna(row.transport_type) else "暂无匹配交通"
-        depart = fmt_dt(row.suggested_departure_time)
+        departure = departure_time(row.start_time, row.transport_type,
+                                   None if pd.isna(row.estimated_time) else float(row.estimated_time), int(extra))
+        depart = fmt_dt(departure) if departure is not None else "暂无匹配交通，无法估算出发时间"
         st.markdown(
             f"""
             <div class="card">
@@ -2439,7 +2378,7 @@ def page_admin(engine: Engine) -> None:
             if st.button("删除选中剧目", type="primary"):
                 try:
                     for label in selected_prod:
-                        execute_sql(engine, "DELETE FROM Production WHERE production_id = :id", {"id": prod_del_options[label]})
+                        delete_catalog_item(engine, "Production", prod_del_options[label])
                         admin_log(engine, admin_id, "DELETE", "Production", prod_del_options[label], f"删除剧目：{label}")
                     st.success(f"已删除 {len(selected_prod)} 个剧目。")
                     st.rerun()
@@ -2453,7 +2392,7 @@ def page_admin(engine: Engine) -> None:
             if st.button("删除选中场次"):
                 try:
                     for label in selected_perf:
-                        execute_sql(engine, "DELETE FROM Performance WHERE performance_id = :id", {"id": perf_del_options[label]})
+                        delete_catalog_item(engine, "Performance", perf_del_options[label])
                         admin_log(engine, admin_id, "DELETE", "Performance", perf_del_options[label], f"删除场次：{label}")
                     st.success(f"已删除 {len(selected_perf)} 个场次。")
                     st.rerun()
